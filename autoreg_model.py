@@ -1,0 +1,144 @@
+import torch.nn as nn
+import torch
+import os
+
+from utils.tensor_utils import ortho_basis, inner_ort_basis
+import torch.nn.functional as F
+import math
+
+root_dir = os.path.dirname(os.path.abspath(__file__))
+loc_weights_path = os.path.join(root_dir, 'nuk_4_nn.pth')
+
+
+loc_args = {'h_d': 64,
+            'num_nuks_head': 32,
+            'device': 'cuda'
+            }
+
+
+class Autoreg_module(nn.Module):
+    def __init__(self, gen, device='cuda'):
+        super(Autoreg_module, self).__init__()
+
+        self.device = device
+        self.gen = gen(**loc_args)
+        self.gen.load_state_dict(torch.load(loc_weights_path))
+        self.gen.eval()
+        for param in self.gen.parameters():
+            param.requires_grad = False
+
+        self.act_fn = nn.GELU()
+
+        self.N = 4
+        self.K_lin = nn.Linear(self.gen.h_d, self.N*self.gen.h_d)
+        self.Q_lin = nn.Linear(self.gen.h_d, self.N*self.gen.h_d)
+        self.V_lin = nn.Linear(self.gen.h_d, self.N * self.gen.h_d)
+
+        self.prj_att_ln = nn.Linear(self.N*self.gen.h_d, self.gen.h_d)
+        self.norm = nn.LayerNorm(self.gen.h_d)
+
+        self.cord_prj_layer = nn.Sequential(
+                                nn.Linear(self.gen.h_d, 32),
+                                self.act_fn,
+                                nn.Dropout(0.1),
+                                nn.Linear(32, 16),
+                                self.act_fn,
+                                nn.Linear(16, 3),
+                                self.act_fn,
+                                )
+
+        self.conv_block = nn.Sequential(nn.Conv2d(in_channels=1, out_channels=4, kernel_size=3, stride=1, padding=1),
+                                        self.act_fn,
+                                        nn.Conv2d(in_channels=4, out_channels=16, kernel_size=3, stride=1, padding=1),
+                                        self.act_fn,
+                                        nn.Conv2d(in_channels=16, out_channels=4, kernel_size=3, stride=1, padding=1),
+                                        self.act_fn,
+                                        nn.Conv2d(in_channels=4, out_channels=1, kernel_size=3, stride=1, padding=1),
+                                        )
+
+        self.nuk_embedder = nn.Embedding(5, embedding_dim=self.gen.h_d)
+
+    def apply_rope(self, x, theta):
+
+        x1, x2 = x[..., ::2], x[..., 1::2]
+        sin_theta, cos_theta = theta[..., ::2].to(self.device), theta[..., 1::2].to(self.device)
+
+        x_rotated = torch.cat([
+            x1 * cos_theta - x2 * sin_theta,  # Новая x-компонента
+            x1 * sin_theta + x2 * cos_theta  # Новая y-компонента
+        ], dim=-1)
+
+        return x_rotated
+
+
+    def forward(self, full_seq, seqs, init_cord, bps):
+
+        emb = self.gen.nuk_loc_embedder(full_seq.long()) + self.nuk_embedder(full_seq.long())
+        seq_len, _ = emb.shape
+
+        pos = torch.arange(seq_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, emb.size(1), 2) * -(math.log(10000.0) / emb.size(1)))
+        pe = torch.zeros(seq_len, emb.size(1))
+
+        pe[:, 0::2] = torch.sin(pos * div_term)
+        pe[:, 1::2] = torch.cos(pos * div_term)
+        pos_emb = self.apply_rope(emb, pe).to(self.device)
+
+        emb = pos_emb+emb
+
+        q = self.Q_lin(emb).reshape(seq_len, self.N, self.gen.h_d).permute(1, 0, 2)
+        k = self.K_lin(emb).reshape(seq_len, self.N, self.gen.h_d).permute(1, 0, 2)
+        v = self.V_lin(emb)
+        v = v.view(seq_len, self.N, self.gen.h_d).permute(1, 0, 2)
+
+        bps = bps.to(torch.float32)
+        bps = self.conv_block(bps.unsqueeze(0)).mean(0)
+
+        score = torch.matmul(q, k.transpose(-2, -1))  # [N, L, L]
+        score = score / (float(self.gen.h_d))**0.5
+        bps = bps.unsqueeze(0).repeat(self.N, 1, 1)
+        score = score.to(torch.float32)
+        score = F.softmax(score, dim=-1).to(torch.float32)  # [N, L, L]
+        attn_weights = bps + score
+        attn_output = torch.matmul(attn_weights, v).permute(1, 0, 2).reshape(seq_len, self.N*self.gen.h_d)
+        output = self.norm(emb + self.prj_att_ln(self.act_fn(attn_output)))
+        output = self.act_fn(output)
+
+        dr = self.cord_prj_layer(output)[6:-3]              #на 9 больше, тк первые шесть не предсказываем и последние три тоже
+
+
+        r_curr = init_cord.to(self.device)
+        cord = torch.empty((0, 3)).to(self.device)
+
+        for num, seq in enumerate(seqs[:5]):
+            v10 = (r_curr[1, :] - r_curr[0, :])
+            v20 = (r_curr[2, :] - r_curr[0, :])
+            delta = dr[num]
+            vec_ortho = ortho_basis(v10.unsqueeze(0), v20.unsqueeze(0))              # получаем матрицу перехода которую используем в изначальном генераторе
+            ortho_mat = inner_ort_basis(vec_ortho) #.transpose(-1, -2)             #чтобы было согласованно с предсказанием
+
+            r_pred = self.gen(seq.unsqueeze(0), r=r_curr.unsqueeze(0))
+            r_pred = ortho_mat.transpose(-1, -2)@delta + r_curr[-1] + r_pred
+            r_curr = torch.cat([r_curr[1:], r_pred], dim=0)
+            cord = torch.cat([cord, r_pred])
+
+        return cord
+
+
+    def autoreg_gen(self, seqs, init_cord):
+        r_curr = init_cord.to(self.device)
+        cord = torch.empty((0, 3)).to(self.device)
+        inners = torch.empty((0, 3, 3)).to(self.device)
+
+        for num, seq in enumerate(seqs):
+            v10 = (r_curr[1, :] - r_curr[0, :])
+            v20 = (r_curr[2, :] - r_curr[0, :])
+
+            vec_ortho = ortho_basis(v10.unsqueeze(0), v20.unsqueeze(0)) #получаем матрицу перехода которую используем в изначальном генераторе
+            inner_basis = inner_ort_basis(vec_ortho)
+            inners = torch.cat((inners, inner_basis), dim=0)
+            r_pred = self.gen(seq.unsqueeze(0), r=r_curr.unsqueeze(0))
+            r_pred = r_pred + r_curr[-1]
+            r_curr = torch.cat([r_curr[1:], r_pred], dim=0)
+            cord = torch.cat([cord, r_pred])
+        return cord
