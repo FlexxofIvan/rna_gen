@@ -34,3 +34,6 @@ def inner_ort_basis(x, eps=1e-6):
     e3 = x[:, 2] - (e1 * x[:, 2]).sum(dim=1, keepdim=True) * e1 - (e2 * x[:, 2]).sum(dim=1, keepdim=True) * e2
     e3 = e3 / (e3.norm(dim=1, keepdim=True) + eps)
     return torch.stack([e1, e2, e3], dim=1)
+
+def mat_mul_vec(mat, vec):
+    return (mat @ vec.unsqueeze(-1)).squeeze(-1)
