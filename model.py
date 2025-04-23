@@ -8,7 +8,6 @@ from utils.tensor_utils import compute_angles, ortho_basis
 num_emb = 6
 num_dehid_pos = 4
 num_global_pos = 12
-
 pad_idx =5
 
 
@@ -209,7 +208,7 @@ class Local_module(nn.Module):
         e3 = e3 / (e3.norm(dim=1, keepdim=True) + eps)
         return torch.stack([e1, e2, e3], dim=1)  # [B, 3, 3]
 
-    def forward(self, seq, r=None):
+    def forward(self, seq, r=None, first=False):
         batch_size = seq.size(0)
 
         v10 = (r[:, 1, :] - r[:, 0, :]).unsqueeze(1)
@@ -275,7 +274,7 @@ class Global_module(nn.Module):
         self.h_d = h_d
         self.num_nuks_head = num_nuks_head
 
-        self.nuk_loc_embedder = nn.Embedding(num_emb, embedding_dim=self.h_d)
+        self.nuk_loc_embedder = nn.Embedding(num_emb, embedding_dim=self.h_d, padding_idx=pad_idx)
         self.loc_curr = Local_module(num_nuks_head=self.num_nuks_head,  h_d=self.h_d)
 
         self.act_fn = nn.GELU()

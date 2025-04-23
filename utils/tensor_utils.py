@@ -37,3 +37,28 @@ def inner_ort_basis(x, eps=1e-6):
 
 def mat_mul_vec(mat, vec):
     return (mat @ vec.unsqueeze(-1)).squeeze(-1)
+
+
+def normalize_basis(a, b, c):
+
+    x = b - a
+    x = x / x.norm()
+
+    temp = c - a
+    z = torch.cross(x, temp)
+    z = z / z.norm()
+
+    y = torch.cross(z, x)
+
+    R = torch.stack([x, y, z], dim=1)  # (3, 3) — матрица поворота
+    return R
+
+def loc_basis(v):
+    v20 = (v[2] - v[0])
+    e20 = v20/torch.norm(v20)
+
+    v10 = (v[1] - v[0])
+    v_sch10 = v10 - (torch.dot(v10, e20))*e20
+    e10 = v_sch10/torch.norm(v_sch10)
+    e_ = torch.cross(e20, e10)/torch.norm(torch.cross(e10, e20))
+    return torch.stack([e20, e10, e_], dim=1)

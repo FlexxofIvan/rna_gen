@@ -2,6 +2,8 @@ import torch
 import matplotlib.pyplot as plt
 from model import Global_module
 from autoreg_model import Autoreg_module
+from constants import means_dict
+from utils.tensor_utils import normalize_basis, loc_basis
 
 data_dir = '../data/data_filt_autoreg.pt'
 
@@ -13,13 +15,13 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model = Autoreg_module(gen=Global_module).to(device)
 
 
-#seqs, r_fea, bp, r_tar = data[179]
-
+means_init = torch.tensor([[ 0.0000e+00,  0.0000e+00,  0.0000e+00],
+                            [ 5.4882e+00,  1.5850e+00, -1.6459e-09],
+                            [ 1.0820e+01,  5.6656e-08,  1.4443e-08]])
 
 full_data = []
 for num in range(len(data)):
-    seqs, r_fea, bp, r_tar = data[num]
-
+    seqs, _, bp, r_tar = data[num]
     full_seq = torch.empty(0).to(device)
     if seqs.shape[0] == 1:
         full_seq = seqs[0]
@@ -35,10 +37,13 @@ for num in range(len(data)):
         else:
             full_seq = torch.cat([full_seq, seq[0][-1].unsqueeze(0)]).to(device)
 
+    r_tar = r_tar - r_tar[0]
+    dv = r_tar
+    R1 = loc_basis(dv)
+    r_tar = torch.einsum('ij, lj -> li', R1.transpose(-2, -1), r_tar)
+    full_data.append((full_seq, seqs, means_init, bp, r_tar))
 
-    full_data.append((full_seq, seqs, r_fea, bp, r_tar))
-
-full_seq, seqs, r_fea, bp, r_tar = full_data[189]
+full_seq, seqs, r_fea, bp, r_tar = full_data[179]
 
 full_seq = full_seq.to(device)
 seqs = seqs.to(device)
@@ -46,10 +51,11 @@ r_init = r_fea.to(device)
 r_tar = r_tar.to(device)
 bp= bp.to(device)
 
+r_tar = r_tar - r_tar[0]
+
 model.load_state_dict(torch.load(f'../checkpoints/autoreg_epoch.pt'))
 model.eval()
-_, r = model.full_gen(full_seq, seqs, r_init, bp)
-
+_, r = model(full_seq, seqs, r_init, bp)
 r = r.detach().cpu()
 
 def vis_two(r1, r2):
@@ -71,5 +77,4 @@ def vis_two(r1, r2):
 
 vis_two(r, r_tar.cpu())
 
-print(r, r_tar)
 

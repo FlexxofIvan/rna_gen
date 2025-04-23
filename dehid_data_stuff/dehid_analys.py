@@ -5,11 +5,11 @@ import pandas as pd
 import seaborn as sns
 import torch
 import numpy as np
-from constants import nuks_val,  means_norm_val
+from constants import nuks_val
 import os
 
 
-dir_path = 'dihedrals'
+dir_path = '../dihedrals'
 
 def get_coords_dehid(dir_name, nuk_name):
     path = f'{dir_name}/{nuk_name}.sdf'
@@ -94,15 +94,11 @@ for name in os.listdir(dir_path):
     d_tens = torch.empty((0,3,3))
     for x in coords:
         r = torch.tensor(x[:-1, :])
-        v10 = (r[1,:] - r[0,:]).unsqueeze(0)
-        v20 = (r[2,:] - r[0,:]).unsqueeze(0)
-        v12 = (r[1,:] - r[2,:]).unsqueeze(0)
-        dv = torch.cat((v10, v20, v12))
+        dv = r - r[0].unsqueeze(0)
         d_tens = torch.cat((d_tens, dv.unsqueeze(0)), dim=0)
-    x = compute_vector_metrics(d_tens)
-
-
-    X = torch.stack(X)
+    mean_init_cord = d_tens.mean(0)
+    #x = compute_vector_metrics(d_tens)
+    #X = torch.stack(X)
 
     #Y = [ortho_basis(torch.tensor(x[1]-x[0]),  torch.tensor(x[2]-x[0]))
       #   for x in [r[:-1, :] for r in coords]]
@@ -122,19 +118,16 @@ for name in os.listdir(dir_path):
     #Y_stds.append(Y_std)
 
     names.append(name[:-4])
-    dataset.append(X)
+    dataset.append(mean_init_cord)
 
 
 
-
- #means_ortho_dict = {name: y for name,y in zip(names, Y)}
-
-
+means_dict = {name: y for name,y in zip(names, dataset)}
 
 
 #means_ang_val = {name: y for name,y in zip(names, means_ang)}
 
-def save_dict_to_py(dict_name, data_dict, encoder_dict, filename="constants.py"):
+def save_dict_to_py(dict_name, data_dict, encoder_dict, filename="../constants.py"):
     with open(filename, "a") as f:
         f.write(f"{dict_name} = {{\n")
         for key_str, tensor in data_dict.items():
@@ -143,7 +136,7 @@ def save_dict_to_py(dict_name, data_dict, encoder_dict, filename="constants.py")
             f.write(f"    {key_idx}: torch.tensor({tensor.tolist()}),\n")
         f.write("}\n")
 
-#save_dict_to_py("means_ortho_val", means_ortho_dict, nuks_val)
+save_dict_to_py("means_dict", means_dict, nuks_val)
 #save_dict_to_py("means_ang_val", means_ang_val, nuks_val)
 
 ### means stds visual

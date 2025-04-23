@@ -2,7 +2,6 @@ from rdkit import Chem
 import numpy as np
 import os
 import torch
-from dataset import nuks_seq_dataset
 from constants import nuks_val
 
 
@@ -24,16 +23,15 @@ def get_coords_dehid(dir_name, nuk_name):
     return dehid_arr
 
 
-
+""""
 dataset = []
 for name in os.listdir(dir_path):
     coords = get_coords_dehid(dir_path, name[:-4])
     code = torch.tensor([nuks_val[let] for let in name[:-4]], dtype=torch.float32)
     X = [((code, r[:-1, :]), r[-1, :]) for r in coords]
     dataset.extend(X)
+"""
 
-
-DATASET = nuks_seq_dataset(dataset)
 
 
 """

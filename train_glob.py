@@ -1,13 +1,15 @@
 import torch
-from torch.nn import L1Loss
 
 from model import Global_module
 from autoreg_model import Autoreg_module, N
+
 import torch.optim as optim
-import torch.nn.functional as F
 import torch.nn as nn
 
+from utils.tensor_utils import loc_basis
 import matplotlib.pyplot as plt
+
+
 
 data_dir = 'data/data_filt_autoreg.pt'
 
@@ -49,11 +51,14 @@ def vis_two(r1, r2, loss=None, step=None):
 
 
 
-### добавим полную последовательность в фичи
+means_init = torch.tensor([[ 0.0000e+00,  0.0000e+00,  0.0000e+00],
+                            [ 5.4882e+00,  1.5850e+00, -1.6459e-09],
+                            [ 1.0820e+01,  5.6656e-08,  1.4443e-08]])
+
+
 full_data = []
 for num in range(len(data)):
-    seqs, r_fea, bp, r_tar = data[num]
-
+    seqs, _, bp, r_tar = data[num]
     full_seq = torch.empty(0).to(device)
     if seqs.shape[0] == 1:
         full_seq = seqs[0]
@@ -69,13 +74,17 @@ for num in range(len(data)):
         else:
             full_seq = torch.cat([full_seq, seq[0][-1].unsqueeze(0)]).to(device)
 
+    r_tar = r_tar - r_tar[0]
+    dv = r_tar[:3]
+    R1 = loc_basis(dv)
+    r_tar = torch.einsum('ij, lj -> li', R1.transpose(-2, -1), r_tar)
+    full_data.append((full_seq, seqs, means_init, bp, r_tar))
 
-    full_data.append((full_seq, seqs, r_fea, bp, r_tar))
 
 
-modela.load_state_dict(torch.load(f'checkpoints/autoreg_epoch.pt'))
+#modela.load_state_dict(torch.load(f'checkpoints/autoreg_epoch.pt'))
 import random
-criterion = nn.SmoothL1Loss(beta=5) #50
+criterion = nn.L1Loss()#50
 batch_size = 32
 #random.shuffle(full_data)
 
@@ -102,38 +111,29 @@ for epoch in range(10000):
         noise = 0.1*torch.randn_like(r_fea)
         diff_pred, r_pred = modela(full_seqs, seqs, r_fea+noise, bp)
 
-        r_tar = r_tar
+        r_tar = r_tar[:N]
+        r_tar = r_tar - r_tar[0].unsqueeze(0)
+
         diff = r_tar.unsqueeze(1) - r_tar.unsqueeze(0)
 
+        loss = (criterion(diff, diff_pred) + criterion(r_tar, r_pred))/2 # возможно тут надо заменить срез
 
-        loss = (criterion(diff, diff_pred) + criterion(r_tar, r_pred)) # возможно тут надо заменить срез
-        #if loss>5:
-         #   continue
         batch_loss += loss
         batch_count += 1
 
         if batch_count == batch_size:
             avg_batch_loss = batch_loss / batch_count
             print(avg_batch_loss)
-            #if avg_batch_loss>4.5:
-              #  continue
 
-            #vis_two(r_pred.detach().cpu(), r_tar.cpu(), loss = avg_batch_loss, step =i)
+            if not torch.isnan(avg_batch_loss) and not torch.isinf(avg_batch_loss):
+                avg_batch_loss.backward()
+                optimizer.step()
+                optimizer.zero_grad()
 
-            avg_batch_loss.backward()
-            optimizer.step()
-            #if epoch==0:
-               # for name, param in modela.named_parameters():
-                #    if param.grad is not None:
-                 #       print(f"{name}: grad shape {param.grad.shape}, grad mean {param.grad.mean().item():.4f}")
-                  #  else:
-                   #     print(f"{name}: grad is None")
-
-            optimizer.step()
-            optimizer.zero_grad()
-
-            total_loss += avg_batch_loss.item()
-            count += 1
+                total_loss += avg_batch_loss.item()
+                count += 1
+            else:
+                print(f"[WARNING] Skipped batch {i} due to NaN/Inf in loss")
 
             batch_loss = 0.0
             batch_count = 0
@@ -142,10 +142,13 @@ for epoch in range(10000):
     # если остался "хвост" в батче
     if batch_count > 0:
         avg_batch_loss = batch_loss / batch_count
-        avg_batch_loss.backward()
-        optimizer.step()
-        total_loss += avg_batch_loss.item()
-        count += 1
+        if not torch.isnan(avg_batch_loss) and not torch.isinf(avg_batch_loss):
+            avg_batch_loss.backward()
+            optimizer.step()
+            total_loss += avg_batch_loss.item()
+            count += 1
+        else:
+            print(f"[WARNING] Skipped final mini-batch due to NaN/Inf in loss")
 
     avg_loss = total_loss / count if count > 0 else 0
     print(f"[Epoch {epoch + 1}] Average Loss: {avg_loss:.6f}")

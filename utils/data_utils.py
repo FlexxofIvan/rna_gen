@@ -24,7 +24,8 @@ def seq_converter(seq, reverse=False):
     return list(map(lambda x: nuks_val[x], seq))
 
 
-pad_sym = '5'
+pad_symb = 'p'
+pad_num = 5
 
 def select_seq_and_cord(groups, seq_num: False, padding:False):
     """
@@ -33,8 +34,8 @@ def select_seq_and_cord(groups, seq_num: False, padding:False):
     """
     data = []
     if padding:
-        padding_tensor = torch.zeros((5,3))
-        pad_symb = rev_nuks_val[pad_sym]
+        padding_tensor = torch.zeros(4, 3)
+        #pad_symb = rev_nuks_val[pad_sym]
 
     for group in groups:
         r = torch.tensor(np.array(group.loc[:, ['x_1', 'y_1', 'z_1']]), dtype=torch.float32)
@@ -61,10 +62,11 @@ def unfold_seq_r(datas, padding: False):
     seqs, rs = datas
     if padding:
         r_unfs = rs.unfold(dimension=0, size=4, step=1).transpose(-2, -1)[1:-1]
+        seq_unfs = seqs.unfold(dimension=0, size=4, step=1)[1:-1]
     else:
         r_unfs = rs.unfold(dimension=0, size=4, step=1).transpose(-2, -1)
+        seq_unfs = seqs.unfold(dimension=0, size=4, step=1)
 
-    seq_unfs = seqs.unfold(dimension=0, size=4, step=1)
     return seq_unfs, r_unfs
 
 
