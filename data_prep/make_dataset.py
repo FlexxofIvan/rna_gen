@@ -35,8 +35,7 @@ for num, window in enumerate(window_lst):
         else:
             full_seq = torch.cat([full_seq, seq[-1].unsqueeze(0)])
 
-    #print(full_seq)
-    #full_seq = full_seq[:-3] ###чтобы символы с паддингом не шли, блять убери в начале еще
+
     bpp_seq = seq_to_bpp(full_seq[3:-3], numeric_repr=True)
     data_glob = [(torch.stack([window[num-3][0], window[num][0], window[num+3][0]]), window[num][1])
          for num in range(3, len(window)-3)]
@@ -51,14 +50,11 @@ for num, window in enumerate(window_lst):
             tar_r = torch.cat((tar_r, r[-1].unsqueeze(0)))
 
         seqs= torch.cat((seqs, seq.unsqueeze(0)), dim=0)
-        #init_r = torch.cat((init_r, r[:-1].unsqueeze(0)), dim=0)
 
-
-    #print(init_r.shape, seqs.shape, bpp_seq.shape, tar_r.shape)
     data_test.append((seqs, init_r, bpp_seq, tar_r))
 
 
-data_filt = [data for data in data_test if 0<data[0].shape[0]<100]
+data_filt = [data for data in data_test if 0<data[0].shape[0]<150]
 data_filt_autoreg = [(seq, r_init[0], bpp, r_tar) for (seq, r_init, bpp, r_tar) in data_filt]
 
 #torch.save(data_filt_autoreg, "data_filt_autoreg.pt")

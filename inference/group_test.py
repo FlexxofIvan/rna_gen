@@ -43,7 +43,8 @@ for num in range(len(data)):
     r_tar = torch.einsum('ij, lj -> li', R1.transpose(-2, -1), r_tar)
     full_data.append((full_seq, seqs, means_init, bp, r_tar))
 
-full_seq, seqs, r_fea, bp, r_tar = full_data[179]
+
+full_seq, seqs, r_fea, bp, r_tar = full_data[189]
 
 full_seq = full_seq.to(device)
 seqs = seqs.to(device)
