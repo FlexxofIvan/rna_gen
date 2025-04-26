@@ -2,22 +2,24 @@ import torch
 import matplotlib.pyplot as plt
 from model import Global_module
 from autoreg_model import Autoreg_module
-from constants import means_dict
-from utils.tensor_utils import normalize_basis, loc_basis
+from utils.tensor_utils import loc_basis
 
+
+
+ ### подгружаем данные
 data_dir = '../data/data_filt_autoreg.pt'
-
-
 data = torch.load(data_dir)
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-model = Autoreg_module(gen=Global_module).to(device)
-
-
+### средние начальные координаты
 means_init = torch.tensor([[ 0.0000e+00,  0.0000e+00,  0.0000e+00],
                             [ 5.4882e+00,  1.5850e+00, -1.6459e-09],
                             [ 1.0820e+01,  5.6656e-08,  1.4443e-08]])
+
+
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model = Autoreg_module(gen=Global_module).to(device)
+
 
 full_data = []
 for num in range(len(data)):
@@ -36,16 +38,14 @@ for num in range(len(data)):
             full_seq = torch.cat([full_seq, last_seq])
         else:
             full_seq = torch.cat([full_seq, seq[0][-1].unsqueeze(0)]).to(device)
-
+    ###по сути выравнил начальные 3 нуклеотида поворотом
     r_tar = r_tar - r_tar[0]
     dv = r_tar
     R1 = loc_basis(dv)
     r_tar = torch.einsum('ij, lj -> li', R1.transpose(-2, -1), r_tar)
     full_data.append((full_seq, seqs, means_init, bp, r_tar))
 
-
 full_seq, seqs, r_fea, bp, r_tar = full_data[23]
-
 full_seq = full_seq.to(device)
 seqs = seqs.to(device)
 r_init = r_fea.to(device)

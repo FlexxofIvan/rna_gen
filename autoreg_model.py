@@ -6,8 +6,8 @@ from utils.tensor_utils import ortho_basis, inner_ort_basis, mat_mul_vec
 import torch.nn.functional as F
 import math
 
-#root_dir = os.path.dirname(os.path.abspath(__file__))
-loc_weights_path ='../checkpoints/nuk_4nn.pt'
+
+#loc_weights_path ='checkpoints/nuk_4nn.pt'
 
 
 loc_args = {'h_d': 64,
@@ -28,7 +28,7 @@ class Autoreg_module(nn.Module):
 
         self.device = device
         self.gen = gen(**loc_args)
-        self.gen.load_state_dict(torch.load(loc_weights_path))
+        #self.gen.load_state_dict(torch.load(loc_weights_path))
         self.gen.eval()
 
 
