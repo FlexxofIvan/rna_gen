@@ -6,8 +6,8 @@ from utils.tensor_utils import ortho_basis, inner_ort_basis, mat_mul_vec
 import torch.nn.functional as F
 import math
 
-root_dir = os.path.dirname(os.path.abspath(__file__))
-loc_weights_path = os.path.join(root_dir, 'nuk_4_nn.pth')
+#root_dir = os.path.dirname(os.path.abspath(__file__))
+loc_weights_path ='../checkpoints/nuk_4nn.pt'
 
 
 loc_args = {'h_d': 64,
@@ -16,7 +16,7 @@ loc_args = {'h_d': 64,
             }
 
 
-N = 10
+N = 20
 
 num_emb = 6
 pad_idx =5
@@ -28,8 +28,8 @@ class Autoreg_module(nn.Module):
 
         self.device = device
         self.gen = gen(**loc_args)
-        #self.gen.load_state_dict(torch.load(loc_weights_path))
-        #self.gen.eval()
+        self.gen.load_state_dict(torch.load(loc_weights_path))
+        self.gen.eval()
 
 
         self.act_fn = nn.GELU()
@@ -106,42 +106,29 @@ class Autoreg_module(nn.Module):
 
 
         self.U_init = nn.Sequential(
-            nn.Linear(9, 18),
-            self.act_fn,
-            nn.Linear(18, 27),
-            self.act_fn,
-            nn.Linear(27, 27),
-
+            nn.Linear(3, 5),
+            self.act_tan,
+            nn.Linear(5, 7),
+            self.act_tan,
+            nn.Linear(7, 9),
         )
 
-        self.rad_init = nn.Sequential(
-            nn.Linear(9, 12),
-            self.act_fn,
-            nn.Linear(12, 12),
-            self.act_fn,
-            nn.Linear(12, 9),
-        )
+        self.rad_init = nn.Linear(3, 3)
 
-        self.trans_init = nn.Sequential(
-            nn.Linear(9, 12),
-            self.act_fn,
-            nn.Linear(12, 12),
-            self.act_fn,
-            nn.Linear(12, 9),
-        )
+        self.trans_init = nn.Linear(3, 3)
 
         self.tr_layer = nn.Linear(3, 3)
         self.rad_layer = nn.Linear(3, 3)
 
         self.conv = nn.Conv1d(in_channels=3, out_channels=3, kernel_size=7, stride=1, padding=0)
 
-        self.init_prj = nn.Linear(3, 9)
+        self.init_prj = nn.Linear(3, 3)
 
-        self.dropout_emb = nn.Dropout(p=0.05)
-        self.dropout_attn = nn.Dropout(p=0.05)
-        self.dropout_post = nn.Dropout(p=0.05)
-        self.dropout_init = nn.Dropout(p=0.05)
-        self.dropout_final = nn.Dropout(p=0.05)
+        self.dropout_emb = nn.Dropout(p=0.2)
+        self.dropout_attn = nn.Dropout(p=0.2)
+        self.dropout_post = nn.Dropout(p=0.2)
+        self.dropout_init = nn.Dropout(p=0.2)
+        self.dropout_final = nn.Dropout(p=0.2)
 
 
 
@@ -204,7 +191,7 @@ class Autoreg_module(nn.Module):
 
         mean = torch.tensor([[0.4, 0.5, 0.2]]).to(self.device).repeat(seq_len, 1)[6:-3]
 
-        dr_init = self.act_fn(self.init_prj(dr.mean(0)))
+        dr_init = self.act_fn(self.init_prj(dr[:3]))
         dr_init = self.dropout_init(dr_init)  # Dropout перед геометрией инициализации
 
         U_init = self.act_fn(self.U_init(dr_init).reshape(3, 3, 3))
@@ -254,6 +241,7 @@ class Autoreg_module(nn.Module):
         diff_k = self.K(diff).permute(2, 1, 0)
         dr_v = self.V(dr)
         mat = torch.einsum('ijk,kjl->il', diff_q, diff_k)
+        mat = self.dropout_final(mat)
         d_k = diff_q.shape[-1]
         mat = mat / (d_k ** 0.5)
 
@@ -261,7 +249,6 @@ class Autoreg_module(nn.Module):
         df = torch.einsum('ij,jl->il', attn_weights, dr_v)
 
         df = self.act_fn(df)
-        df = self.dropout_final(df)  # Dropout перед нормализацией
         df = self.r_norm(df)
 
         cord = df + cord

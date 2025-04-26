@@ -1,111 +1,99 @@
-import torch.optim as optim
 import torch
+import matplotlib.pyplot as plt
 from model import Global_module
-import torch.nn as nn
-from torch.utils.data import random_split, DataLoader
-from data_prep.data_utils import DATASET
+from data_prep.make_dataset_loc import dataset_loc
+
+from torch import nn, optim
+from torch.utils.data import Dataset, DataLoader, random_split
+from tqdm import tqdm
 
 
+data_dir = 'data/data_filt_autoreg.pt'
 
-# === Разделение данных на train/test ===
-train_size = int(0.8 * len(DATASET))  # 80% - train, 20% - test
-test_size = len(DATASET) - train_size
-train_dataset, test_dataset = random_split(DATASET, [train_size, test_size])
 
-train_loader = DataLoader(DATASET, batch_size=32, shuffle=True)
-test_loader = DataLoader(DATASET, batch_size=32, shuffle=True)
+data = torch.load(data_dir)
 
-# === Инициализация модели и оптимизатора ===
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = Global_module(h_d=64, num_nuks_head=32).to(device)
 
-model.load_state_dict(torch.load("nuk_4_nn.pth"))
 
-mean_delta = torch.tensor(1.25)
+loc_args = {'h_d': 64,
+            'num_nuks_head': 32,
+            'device': 'cuda'
+            }
+model = Global_module(**loc_args).to(device)
+
+
+BATCH_SIZE = 128
+EPOCHS = 1000
+LR = 1e-4
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# Деление на train/test
+full_dataset = dataset_loc
+train_size = int(0.8 * len(full_dataset))
+test_size = len(full_dataset) - train_size
+train_dataset, test_dataset = random_split(full_dataset, [train_size, test_size])
+
+# DataLoaders
+train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, drop_last=True)
+test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
 
 criterion = nn.MSELoss()
-optimizer = optim.Adam(model.parameters(), lr=1e-6)
+optimizer = optim.Adam(model.parameters(), lr=LR)
 
+model.load_state_dict(torch.load(f'checkpoints/nuk_4nn.pt'))
 
-num_epochs = 500
+train_losses = []
+val_losses = []
 
-
-def random_transform(r):
-    batch_size, seq_len, dim = r.shape
-    Q, _ = torch.linalg.qr(torch.randn(batch_size, dim, dim, device=r.device))
-    t = torch.randn(batch_size, 1, dim, device=r.device) * 5
-    return Q, t
-
-
-for epoch in range(num_epochs):
+for epoch in range(EPOCHS):
     model.train()
-    total_train_loss = 0
-    means = []
+    train_loss = 0.0
 
-    for batch_idx, (inputs, target_r) in enumerate(train_loader):
-        (seqs, r_init) = inputs
-        seqs = seqs.to(device).float()
-        r_init = r_init.to(device).float()
-        target_r = target_r.to(device).float()
+    for batch in tqdm(train_loader, desc=f"Epoch {epoch+1}/{EPOCHS} - Training"):
+
+        (seqs, init_cord), targets = batch
+        seqs, init_cord, targets = seqs.to(DEVICE), init_cord.to(DEVICE), targets.to(DEVICE)
 
         optimizer.zero_grad()
-        b_size, _, _ = r_init.shape
-        Q, t = random_transform(r_init)
-
-        r = torch.cat((r_init, target_r.unsqueeze(1)), dim=1)
-        r_init = r[:, :3, :]
-        target_r = r[:, -1, :]
-
-        #pred_r = model(seqs,  r=r_init)
-        y = target_r - r_init[:, -1, :]
-
-        noise_scale = 0.5  #
-        r_init_noisy = r_init
-
-        pred_r = model(seqs, r=r_init_noisy)
-
-
-        means.append(torch.norm(y, dim=-1).mean())
-        loss = criterion(pred_r, y)
+        noise = 0.2 * torch.randn_like(init_cord)
+        init_cord = init_cord + noise
+        outputs = model(seqs, init_cord)
+        loss = criterion(outputs, targets-init_cord[:, -1])
+        if torch.isnan(loss):
+            print(seqs, init_cord, targets)
         loss.backward()
         optimizer.step()
+        train_loss += loss.item()
 
-        total_train_loss += criterion(pred_r, y).item()
+    avg_train_loss = train_loss / len(train_loader)
+    train_losses.append(avg_train_loss)
 
-    print(f"Epoch {epoch} finished. Avg Loss: {total_train_loss / len(train_loader):.6f}")
-
-
-
-
-    # === Тестирование ===
+    # Валидация
     model.eval()
-    total_test_loss = 0
+    val_loss = 0.0
+
     with torch.no_grad():
-        for (seqs, r_init), target_r in test_loader:
-            seqs, r_init, target_r = seqs.to(device).float(), r_init.to(device).float(), target_r.to(device).float()
+        for batch in tqdm(test_loader, desc=f"Epoch {epoch+1}/{EPOCHS} - Validation"):
+            (seqs, init_cord), targets = batch
+            seqs, init_cord, targets = seqs.to(DEVICE), init_cord.to(DEVICE), targets.to(DEVICE)
 
-            b_size, _, _ = r_init.shape
-            Q, t = random_transform(r_init)
+            outputs = model(seqs, init_cord)
+            loss = criterion(outputs, targets - init_cord[:, -1])
+            val_loss += loss.item()
 
-            r = torch.cat((r_init, target_r.unsqueeze(1)), dim=1)
-            r  = torch.einsum('bij,bnj->bni', Q, r) + t
+    avg_val_loss = val_loss / len(test_loader)
+    val_losses.append(avg_val_loss)
 
-            r_init = r[:, :3, :]
-            target_r = r[:, -1, :]
+    print(f"Epoch {epoch+1}/{EPOCHS} | Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
+    torch.save(model.state_dict(), f'checkpoints/nuk_4nn.pt')
 
-            pred_r = model(seqs, r=r_init)
-
-            y = target_r - r_init[:, -1, :]
-            test_loss = criterion(pred_r, y)
-            total_test_loss += test_loss.item()
-
-
-
-    # === Логирование ===
-    avg_train_loss = total_train_loss / len(train_loader)
-    avg_test_loss = total_test_loss / len(test_loader)
-
-    print(f"Epoch {epoch + 1}/{num_epochs}, Train Loss: {avg_train_loss:.6f}, Test Loss: {avg_test_loss:.6f}")
-
-    # Сохранение модели
-    torch.save(model.state_dict(), "nuk_4_nn.pth")
+# Визуализация
+plt.plot(train_losses, label='Train Loss')
+plt.plot(val_losses, label='Validation Loss')
+plt.xlabel('Epoch')
+plt.ylabel('Loss')
+plt.legend()
+plt.title('Training and Validation Loss')
+plt.grid()
+plt.show()

@@ -11,13 +11,13 @@ pad_idx =5
 
 
 class Block(nn.Module):
-    def __init__(self, h_d, num_h, device='cuda'):
+    def __init__(self, h_d, num_h, device='cuda', dropout=0.2):
         super(Block, self).__init__()
         self.device = device
         self.h_d = h_d
 
         self.pos_embedder = nn.Embedding(num_dehid_pos, embedding_dim=h_d)
-        self.act =  nn.GELU()
+        self.act = nn.GELU()
 
         self.nuk_attn = nn.MultiheadAttention(h_d, num_h, batch_first=True)
         self.nuk_attn_seq = nn.MultiheadAttention(h_d, num_h, batch_first=True)
@@ -25,17 +25,19 @@ class Block(nn.Module):
         self.ffn = nn.Sequential(
             nn.Linear(h_d, h_d),
             nn.GELU(),
+            nn.Dropout(dropout),
             nn.Linear(h_d, h_d),
-            nn.GELU()
+            nn.GELU(),
+            nn.Dropout(dropout)
         )
 
         self.norm1 = nn.LayerNorm(h_d)
         self.norm2 = nn.LayerNorm(h_d)
         self.norm3 = nn.LayerNorm(h_d)
 
+        self.dropout_attn = nn.Dropout(dropout)
 
     def forward(self, r, seq):
-        # r: [B, 4, h_d], seq: [B, 4, h_d]
         B, L, D = seq.shape
 
         pos_ids = torch.arange(4, device=self.device).unsqueeze(0).repeat(B, 1)
@@ -44,21 +46,22 @@ class Block(nn.Module):
         x = self.norm1(seq + pos_embeds)
         seq = x
         attn_out, _ = self.nuk_attn_seq(x, x, seq)
+        attn_out = self.dropout_attn(attn_out)
         x = r + attn_out
         x = self.act(x)
 
         # --- Attention 2 (self-attn) ---
         x2 = self.norm2(x)
         attn_out, _ = self.nuk_attn(x2, x2, x2)
+        attn_out = self.dropout_attn(attn_out)
         x = x + attn_out
 
         # --- Feedforward ---
         x3 = self.norm3(x)
         x = x + self.ffn(x3)
 
-        # --- Geometry Prediction ---
+        return seq, x  # [B, 4, h_d]
 
-        return seq, x # 4, h_d
 
 
 
@@ -151,10 +154,10 @@ class Local_module(nn.Module):
         self.lin_r = nn.Linear(3*3, 3)
         self.lin_t = nn.Linear(3 * 3, 3)
 
-        self.dropout_pre = nn.Dropout(p=0.05)
-        self.dropout_blocks = nn.Dropout(p=0.05)
-        self.dropout_attn = nn.Dropout(p=0.05)
-        self.dropout_final = nn.Dropout(p=0.05)
+        self.dropout_pre = nn.Dropout(p=0.2)
+        self.dropout_blocks = nn.Dropout(p=0.2)
+        self.dropout_attn = nn.Dropout(p=0.2)
+        self.dropout_final = nn.Dropout(p=0.2)
 
 
 

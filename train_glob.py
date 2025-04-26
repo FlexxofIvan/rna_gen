@@ -78,6 +78,12 @@ for num in range(len(data)):
     dv = r_tar[:3]
     R1 = loc_basis(dv)
     r_tar = torch.einsum('ij, lj -> li', R1.transpose(-2, -1), r_tar)
+    diff = r_tar[1:] - r_tar[:-1]
+    norm = torch.norm(diff, dim=-1)
+    if (norm > 10).any():
+        pass
+    else:
+        full_data.append((full_seq, seqs, means_init, bp, r_tar))
     full_data.append((full_seq, seqs, means_init, bp, r_tar))
 
 
@@ -117,7 +123,7 @@ for epoch in range(10000):
         r_tar = r_tar.to(device)
         bp = bp.to(device)
 
-        noise = 0.1*torch.randn_like(r_fea)
+        noise = 0.2*torch.randn_like(r_fea)
         diff_pred, r_pred = modela(full_seqs, seqs, r_fea+noise, bp)
 
         r_tar = r_tar
