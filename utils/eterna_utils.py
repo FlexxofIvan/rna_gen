@@ -1,6 +1,7 @@
 import os
 os.environ["ARNIEFILE"] = f"/home/ivan/anaconda3/envs/mols/lib/python3.10/site-packages/arnie/arnie.txt"
 
+
 import torch
 from utils.data_utils import seq_converter
 from arnie.bpps import bpps

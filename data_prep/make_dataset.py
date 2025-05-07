@@ -55,6 +55,8 @@ for num, window in enumerate(window_lst):
 
 
 data_filt = [data for data in data_test if 0<data[0].shape[0]<150]
+#data_filt = [data for data in data_test if 70<data[0].shape[0]]
+#print(len(data_filt))
 data_filt_autoreg = [(seq, r_init[0], bpp, r_tar) for (seq, r_init, bpp, r_tar) in data_filt]
 
 #torch.save(data_filt_autoreg, "data_filt_autoreg.pt")

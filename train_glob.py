@@ -8,13 +8,8 @@ import torch.nn as nn
 
 from utils.tensor_utils import loc_basis
 import matplotlib.pyplot as plt
-
-
-
-data_dir = 'data/data_filt_autoreg.pt'
-
-data = torch.load(data_dir)
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+import random
+from data_prep.batched_dataset import device, train_loader, test_loader
 
 
 def vis_two(r1, r2, loss=None, step=None):
@@ -43,81 +38,42 @@ def vis_two(r1, r2, loss=None, step=None):
     plt.show()
 
 
-modela = Autoreg_module(gen=Global_module).to(device)
+
+modela = Autoreg_module(gen=Global_module, h_d=64).to(device)
+
+#trainable_params = filter(lambda p: p.requires_grad, modela.parameters())
+
 optimizer = optim.Adam(
     modela.parameters(),
     lr=1e-4,
-    weight_decay=1e-5
+    weight_decay=1e-4
 )
 
 
-modela.load_state_dict(torch.load(f'checkpoints/autoreg_epoch.pt'))
+#modela.load_state_dict(torch.load(f'checkpoints/autoreg_epoch.pt'))
 criterion = nn.L1Loss()
-batch_size = 32
 
 
-
-import random
-
-means_init = torch.tensor([[ 0.0000e+00,  0.0000e+00,  0.0000e+00],
-                            [ 5.4882e+00,  1.5850e+00, -1.6459e-09],
-                            [ 1.0820e+01,  5.6656e-08,  1.4443e-08]])
-
-full_data = []
-for num in range(len(data)):
-    seqs, _, bp, r_tar = data[num]
-    full_seq = torch.empty(0).to(device)
-    if seqs.shape[0] == 1:
-        full_seq = seqs[0]
-    for part_num, seq in enumerate(seqs.to(device)):
-        if part_num == 0:
-            full_seq = seq[0]
-        elif part_num == len(seqs)-1:
-            prev = seq[0][-1].unsqueeze(0)
-            curr = seq[1][1:-1]
-            next = seq[-1]
-            last_seq = torch.cat([prev, curr, next])
-            full_seq = torch.cat([full_seq, last_seq])
-        else:
-            full_seq = torch.cat([full_seq, seq[0][-1].unsqueeze(0)]).to(device)
-
-    r_tar = r_tar - r_tar[0]
-    dv = r_tar[:3]
-    R1 = loc_basis(dv)
-    r_tar = torch.einsum('ij, lj -> li', R1.transpose(-2, -1), r_tar)
-    diff = r_tar[1:] - r_tar[:-1]
-    norm = torch.norm(diff, dim=-1)
-    if (norm > 10).any():
-        pass
-    else:
-        full_data.append((full_seq, seqs, means_init, bp, r_tar))
-
-
-indices_to_drop = {198, 362}
-filtered_data = [item for i, item in enumerate(full_data) if i not in indices_to_drop]
-
-random.seed(42)
-val_indices = random.sample(range(len(full_data)), 100)
-train_indices = [i for i in range(len(filtered_data)) if i not in val_indices]
-
-full_data_train = [filtered_data[i] for i in train_indices]
-full_data_val = [filtered_data[i] for i in val_indices]
-
+def d_vecs(x):
+    x = x[:,1:] - x[:,:-1]
+    x = torch.cat((x[:,0].unsqueeze(1), x), dim=1)
+    return x
 
 
 def train(data_train, data_val, model, loss_fn, epoch_num):
 
     for epoch in range(epoch_num):
-        total_loss = 0.0
-        count = 0
-        batch_loss = 0.0
-        batch_count = 0
+
+        total_loss = 0
 
         optimizer.zero_grad()
-        random.shuffle(data_train)
-        for i, (full_seqs, seqs, r_fea, bp, r_tar) in enumerate(data_train):
-            if full_seqs.shape[0] == 0 or seqs.shape[0] in [1, 2]:
-                continue
+        for batch in data_train:
+            full_seqs = batch['full_seq']
+            seqs = batch['seqs']
+            r_fea = batch['means_init']
+            bp = batch['bp']
+            r_tar = batch['r_tar']
+
 
             seqs = seqs.to(device)
             r_fea = r_fea.to(device)
@@ -125,60 +81,43 @@ def train(data_train, data_val, model, loss_fn, epoch_num):
             bp = bp.to(device)
 
             noise = 0.2*torch.randn_like(r_fea)
-            diff_pred, r_pred = model(full_seqs, seqs, r_fea+noise, bp)
+            r_fea = (r_fea+noise)
+            r_pred = model(full_seqs, seqs, r_fea, bp)
 
-            r_tar = r_tar
+            #r_tar = r_tar
+            mask = (((torch.norm(r_tar, dim=-1) != 0).float()).reshape(8, 128, 1)).repeat(1, 1, 3)
+            diff_pred = r_pred.unsqueeze(2) - r_pred.unsqueeze(1)
+
+            r_pred = mask*r_pred
+
             r_tar = r_tar - r_tar[0].unsqueeze(0)
+            diff = r_tar.unsqueeze(2) - r_tar.unsqueeze(1)
 
-            diff = r_tar.unsqueeze(1) - r_tar.unsqueeze(0)
+            diff_r = d_vecs(r_tar)
+            diff_model = d_vecs(r_pred)
 
-            loss = (loss_fn(diff, diff_pred) + criterion(r_tar, r_pred))/2 # возможно тут надо заменить срез
+            loss = (loss_fn(diff, diff_pred) + loss_fn(r_tar, r_pred) + loss_fn(diff_r, diff_model))/3 # возможно тут надо заменить срез
 
-            batch_loss += loss
-            batch_count += 1
+            loss.backward()
+            optimizer.step()
 
-            if batch_count == batch_size:
-                avg_batch_loss = batch_loss / batch_count
-                print(avg_batch_loss)
+            total_loss += loss.item()
 
-                if not torch.isnan(avg_batch_loss) and not torch.isinf(avg_batch_loss):
-                    avg_batch_loss.backward()
-                    optimizer.step()
-                    optimizer.zero_grad()
+        avg_train_loss = total_loss / len(data_train)
+        print(f"[Epoch {epoch + 1}] Train loss: {avg_train_loss:.4f}")
 
-                    total_loss += avg_batch_loss.item()
-                    count += 1
-                else:
-                    print(f"[WARNING] Skipped batch {i} due to NaN/Inf in loss")
-
-                batch_loss = 0.0
-                batch_count = 0
-
-
-        # если остался "хвост" в батче
-        if batch_count > 0:
-            avg_batch_loss = batch_loss / batch_count
-            if not torch.isnan(avg_batch_loss) and not torch.isinf(avg_batch_loss):
-                avg_batch_loss.backward()
-                optimizer.step()
-                total_loss += avg_batch_loss.item()
-                count += 1
-            else:
-                print(f"[WARNING] Skipped final mini-batch due to NaN/Inf in loss")
-
-        avg_loss = total_loss / count if count > 0 else 0
-        print(f"[Epoch {epoch + 1}] Average Loss: {avg_loss:.6f}")
-        torch.save(modela.state_dict(), f'checkpoints/autoreg_epoch.pt')
-
+        #torch.save(modela.state_dict(), f'checkpoints/autoreg_epoch.pt')
 
         model.eval()
-        with torch.no_grad():
-            val_loss = 0.0
-            val_count = 0
+        val_loss = 0.0
 
-            for i, (full_seqs, seqs, r_fea, bp, r_tar) in enumerate(data_val):
-                if full_seqs.shape[0] == 0 or seqs.shape[0] in [1, 2]:
-                    continue
+        with torch.no_grad():
+            for batch in data_val:
+                full_seqs = batch['full_seq']
+                seqs = batch['seqs']
+                r_fea = batch['means_init']
+                bp = batch['bp']
+                r_tar = batch['r_tar']
 
                 seqs = seqs.to(device)
                 r_fea = r_fea.to(device)
@@ -187,19 +126,19 @@ def train(data_train, data_val, model, loss_fn, epoch_num):
 
                 diff_pred, r_pred = model(full_seqs, seqs, r_fea, bp)
 
-                r_tar = r_tar
                 r_tar = r_tar - r_tar[0].unsqueeze(0)
-                diff = r_tar.unsqueeze(1) - r_tar.unsqueeze(0)
+                diff = r_tar.unsqueeze(2) - r_tar.unsqueeze(1)
 
-                loss = (criterion(diff, diff_pred) + criterion(r_tar, r_pred)) / 2
+                diff_r = d_vecs(r_tar)
+                diff_model = d_vecs(r_pred)
 
-                if not torch.isnan(loss) and not torch.isinf(loss):
-                    val_loss += loss.item()
-                    val_count += 1
+                loss = (loss_fn(diff, diff_pred) + loss_fn(r_tar, r_pred) + loss_fn(diff_r, diff_model)) / 3
+                val_loss += loss.item()
 
-            avg_val_loss = val_loss / val_count if val_count > 0 else float('nan')
-            print(f"Val loss: {avg_val_loss:.6f}")
-        modela.train()
+        val_loss /= len(data_val)
+        print(f"[Epoch {epoch + 1}] Val loss: {val_loss:.4f}")
+
+        model.train()
 
 
-train(full_data_train, full_data_val, modela, criterion, 1000)
+train(train_loader, test_loader, modela, criterion, 1000)

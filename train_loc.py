@@ -56,7 +56,7 @@ for epoch in range(EPOCHS):
         seqs, init_cord, targets = seqs.to(DEVICE), init_cord.to(DEVICE), targets.to(DEVICE)
 
         optimizer.zero_grad()
-        noise = 0.2 * torch.randn_like(init_cord)
+        noise = torch.randn_like(init_cord)
         init_cord = init_cord + noise
         outputs = model(seqs, init_cord)
         loss = criterion(outputs, targets-init_cord[:, -1])

@@ -25,7 +25,7 @@ def seq_converter(seq, reverse=False):
 
 
 pad_symb = 'p'
-pad_num = 5
+pad_num = nuks_val[pad_symb]
 
 def select_seq_and_cord(groups, seq_num: False, padding:False):
     """

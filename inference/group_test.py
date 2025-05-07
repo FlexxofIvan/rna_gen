@@ -45,7 +45,8 @@ for num in range(len(data)):
     r_tar = torch.einsum('ij, lj -> li', R1.transpose(-2, -1), r_tar)
     full_data.append((full_seq, seqs, means_init, bp, r_tar))
 
-full_seq, seqs, r_fea, bp, r_tar = full_data[23]
+full_seq, seqs, r_fea, bp, r_tar = full_data[47]
+
 full_seq = full_seq.to(device)
 seqs = seqs.to(device)
 r_init = r_fea.to(device)
@@ -58,6 +59,7 @@ model.load_state_dict(torch.load(f'../checkpoints/autoreg_epoch.pt'))
 model.eval()
 _, r = model(full_seq, seqs, r_init, bp)
 r = r.detach().cpu()
+
 
 def vis_two(r1, r2):
     x1, y1, z1 = r1[:, 0].numpy()/100, r1[:, 1].numpy()/100, r1[:, 2].numpy()/100
