@@ -1,6 +1,5 @@
 import torch
 from utils.tensor_utils import loc_basis
-from torch.nn.utils.rnn import pad_sequence
 from constants import nuks_val, max_len
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.data import random_split
@@ -16,7 +15,7 @@ means_init = torch.tensor([[ 0.0000e+00,  0.0000e+00,  0.0000e+00],
                             [ 5.4882e+00,  1.5850e+00, -1.6459e-09],
                             [ 1.0820e+01,  5.6656e-08,  1.4443e-08]])
 
-padd_symb = nuks_val['p']
+padd_symb = torch.tensor(nuks_val['p'])
 
 
 def custom_collate(batch):
@@ -25,6 +24,7 @@ def custom_collate(batch):
     def tens_pad(fea, padd_val):
         padd_size = max_len - fea.shape[0]
         tens_size = fea.shape[1:]
+        padd_val = padd_val.to(device)
         padd = torch.full((padd_size,)+tens_size, padd_val).to(device)
         fea = torch.cat([fea, padd], dim=0)
         return fea
@@ -41,9 +41,11 @@ def custom_collate(batch):
         return fea
 
 
+    pad = torch.tensor(0.0)
+
     full_seqs = torch.stack([tens_pad(x,  padd_symb) for x in full_seqs_list])
     seqs = torch.stack([tens_pad(x,  padd_symb) for x in seqs_list])
-    r_tar = torch.stack([tens_pad(x,  0) for x in r_tar_list])
+    r_tar = torch.stack([tens_pad(x,  pad) for x in r_tar_list])
     bpps = torch.stack([bpp_pad(x) for x in bp_list])
     means = torch.stack(means_list)
 
@@ -59,6 +61,7 @@ def custom_collate(batch):
 full_data = []
 for num in range(len(data)):
     seqs, _, bp, r_tar = data[num]
+
     full_seq = torch.empty(0).to(device)
     if seqs.shape[0] == 1:
         full_seq = seqs[0]
@@ -68,15 +71,16 @@ for num in range(len(data)):
         elif part_num == len(seqs)-1:
             prev = seq[0][-1].unsqueeze(0)
             curr = seq[1][1:-1]
-            next = seq[-1]
-            last_seq = torch.cat([prev, curr, next])
+            next_seq = seq[-1]
+            last_seq = torch.cat([prev, curr, next_seq])
             full_seq = torch.cat([full_seq, last_seq])
         else:
             full_seq = torch.cat([full_seq, seq[0][-1].unsqueeze(0)]).to(device)
 
-    r_tar = r_tar - r_tar[0]
     dv = r_tar[:3]
     R1 = loc_basis(dv)
+
+    r_tar = r_tar - r_tar[0]
     r_tar = torch.einsum('ij, lj -> li', R1.transpose(-2, -1), r_tar)
     diff = r_tar[1:] - r_tar[:-1]
     norm = torch.norm(diff, dim=-1)
@@ -86,6 +90,8 @@ for num in range(len(data)):
         ###
         #padding do 200
         ###
+
+
         full_data.append((full_seq, seqs.to(device), means_init.to(device), bp.to(device), r_tar.to(device)))
 
 
@@ -104,17 +110,27 @@ dataset = MyRNADataset(full_data)
 
 train_size = int(0.8 * len(dataset))
 test_size = len(dataset) - train_size
-train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
+
+batch_size = 8
+
+
+seed = 23  # любой фиксированный seed
+generator = torch.Generator().manual_seed(seed)
+
+train_dataset, test_dataset = random_split(dataset, [train_size, test_size], generator=generator)
+
 
 train_loader = DataLoader(
     train_dataset,
-    batch_size=8,
+    batch_size=batch_size,
     shuffle=True,
     collate_fn=custom_collate
 )
 
 test_loader = DataLoader(
     test_dataset,
-    batch_size=8,
+    batch_size=batch_size,
     shuffle=False,
     collate_fn=custom_collate)
+
+

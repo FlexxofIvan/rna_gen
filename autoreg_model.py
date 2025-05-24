@@ -23,117 +23,225 @@ pad_idx =5
 
 
 class Autoreg_module(nn.Module):
-    def __init__(self, gen, h_d, device='cuda'):
+    def __init__(self, gen, h_d, p= None, device='cuda'):
         super(Autoreg_module, self).__init__()
 
         self.device = device
         self.gen = gen(**loc_args)
         #self.gen.load_state_dict(torch.load(loc_weights_path))
         #self.gen.eval()
-        #for param in self.gen.parameters():
-         #   param.requires_grad = False
 
+        self.p = p
 
         self.h_d = h_d
 
         self.act_fn = nn.GELU()
 
         self.N = 4
-        self.K_lin = nn.Linear(self.h_d, self.N*self.h_d)
-        self.Q_lin = nn.Linear(self.h_d, self.N*self.h_d)
-        self.V_lin = nn.Linear(self.h_d, self.N * self.h_d)
-
         self.prj_att_ln = nn.Linear(self.h_d, self.h_d)
+
 
         self.cord_prj_layer = nn.Sequential(
                                 nn.Linear(self.h_d, 32),
-                                nn.LayerNorm(32),
                                 self.act_fn,
-                                nn.Dropout(0.1),
+
                                 nn.Linear(32, 16),
                                 nn.LayerNorm(16),
                                 self.act_fn,
+
                                 nn.Linear(16, 8),
-                                nn.LayerNorm(8),
                                 self.act_fn,
+
                                 nn.Linear(8, 3),
-                                nn.LayerNorm(3),
                                 )
+
 
         self.att_emb = nn.MultiheadAttention(self.h_d, 32, batch_first=True)
         self.norm1 = nn.LayerNorm(self.h_d)
         self.norm2 = nn.LayerNorm(self.h_d)
 
-        self.conv_block = nn.Sequential(nn.Conv2d(in_channels=1, out_channels=4, kernel_size=3, stride=1, padding=1),
-                                        nn.BatchNorm2d(4, affine=True),
-                                        self.act_fn,
-                                        nn.Conv2d(in_channels=4, out_channels=16, kernel_size=3, stride=1, padding=1),
-                                        nn.BatchNorm2d(16, affine=True),
-                                        self.act_fn,
-                                        nn.Conv2d(in_channels=16, out_channels=4, kernel_size=3, stride=1, padding=1),
-                                        nn.BatchNorm2d(4, affine=True),
-                                        self.act_fn,
-                                        nn.Conv2d(in_channels=4, out_channels=1, kernel_size=3, stride=1, padding=1),
-                                        )
 
+        self.conv_block = nn.Sequential(
+            nn.Conv2d(1, 16, kernel_size=3, padding=1),
+            self.act_fn,
+
+            nn.Conv2d(16, 32, kernel_size=3, padding=1),
+            self.act_fn,
+
+            nn.Conv2d(32, 32, kernel_size=3, padding=1),
+            nn.InstanceNorm2d(32),
+            self.act_fn,
+
+            nn.Conv2d(32, 16, kernel_size=3, padding=1),
+            self.act_fn,
+
+            nn.Conv2d(16, 1, kernel_size=3, padding=1),
+        )
+
+
+        self.conv_block2 = nn.Sequential(
+            nn.Conv2d(1, 16, kernel_size=3, padding=1),
+            self.act_fn,
+
+            nn.Conv2d(16, 32, kernel_size=3, padding=1),
+            self.act_fn,
+
+            nn.Conv2d(32, 32, kernel_size=3, padding=1),
+            nn.InstanceNorm2d(32),
+            self.act_fn,
+
+            nn.Conv2d(32, 16, kernel_size=3, padding=1),
+            self.act_fn,
+
+            nn.Conv2d(16, 1, kernel_size=3, padding=1),
+        )
 
         self.nuk_embedder = nn.Embedding(num_emb, embedding_dim=self.h_d, padding_idx=pad_idx)
 
-        self.Q = nn.Sequential(nn.Linear(3, 8),
-                                self.act_fn,
-                                nn.Linear(8, 32),
-                                self.act_fn,
-                                nn.Linear(32, 64)
-                                )
+        self.Q = nn.Sequential(
+            nn.Linear(3, 8),
+            self.act_fn,
 
-        self.K = nn.Sequential(nn.Linear(3, 8),
-                               self.act_fn,
-                               nn.Linear(8, 32),
-                               self.act_fn,
-                               nn.Linear(32, 64)
-                               )
-        self.V = nn.Linear(3, 3)
+            nn.Linear(8, 32),
+            nn.LayerNorm(32),
+            self.act_fn,
+
+            nn.Linear(32, 64),
+        )
+
+        self.K = nn.Sequential(
+            nn.Linear(3, 8),
+            self.act_fn,
+
+            nn.Linear(8, 32),
+            nn.LayerNorm(32),
+            self.act_fn,
+
+            nn.Linear(32, 64),
+        )
+
+        self.V = nn.Sequential(
+            nn.Linear(3, 8),
+            self.act_fn,
+
+            nn.Linear(8, 16),
+            nn.LayerNorm(16),
+            self.act_fn,
+
+            nn.Linear(16, 8),
+            self.act_fn,
+
+            nn.Linear(8, 3),
+        )
 
         self.r_norm = nn.LayerNorm(3)
         self.u_norm = nn.LayerNorm(3)
 
-        self.denoise_layer = nn.Sequential(nn.Linear(3, 8),
-                                           self.act_fn,
-                                           nn.Linear(8, 3)
-                                           )
+        self.denoise_layer = nn.Sequential(
+            nn.Linear(3, 8),
+            self.act_fn,
 
-        self.act_tan = nn.Tanh()
+            nn.Linear(8, 16),
+            self.act_fn,
+
+            nn.Linear(16, 8),
+            self.act_fn,
+
+            nn.Linear(8, 3),
+        )
 
         self.head_U = nn.Sequential(
-            nn.Linear(3, 5),
-            self.act_tan,
-            nn.Linear(5, 7),
-            self.act_tan,
-            nn.Linear(7, 9),
+            nn.Linear(3, 8),
+            nn.LayerNorm(8),
+            self.act_fn,
+
+            nn.Linear(8, 16),
+            self.act_fn,
+
+            nn.Linear(16, 32),
+            nn.LayerNorm(32),
+            self.act_fn,
+
+            nn.Linear(32, 16),
+            self.act_fn,
+
+            nn.Linear(16, 9),
         )
 
 
-        self.U_init = nn.Sequential(
-            nn.Linear(3, 5),
-            self.act_tan,
-            nn.Linear(5, 7),
-            self.act_tan,
-            nn.Linear(7, 9),
+        self.tr_layer = nn.Sequential(
+            nn.Linear(3, 32),
+            nn.LayerNorm(32),
+            self.act_fn,
+            nn.Linear(32, 16),
+            self.act_fn,
+            nn.Linear(16, 3),
         )
 
-        self.rad_init = nn.Linear(3, 3)
+        self.rad_layer = nn.Sequential(
+            nn.Linear(3, 32),
+            nn.LayerNorm(32),
+            self.act_fn,
+            nn.Linear(32, 16),
+            self.act_fn,
+            nn.Linear(16, 3),
+        )
 
-        self.trans_init = nn.Linear(3, 3)
+        self.init_prj = nn.Sequential(
+            nn.Linear(3, 16),
+            nn.LayerNorm(16),
+            self.act_fn,
+            nn.Linear(16, 3),
+        )
 
-        self.tr_layer = nn.Linear(3, 3)
-        self.rad_layer = nn.Linear(3, 3)
+        self.dropout_attn = nn.Dropout(p=0.1)
+        self.dropout_post = nn.Dropout(p=0.1)
+        #self.dropout_final = nn.Dropout(p=0.1)
 
-        self.init_prj = nn.Linear(3, 3)
 
-        self.dropout_attn = nn.Dropout(p=0.3)
-        self.dropout_post = nn.Dropout(p=0.3)
-        self.dropout_init = nn.Dropout(p=0.3)
-        self.dropout_final = nn.Dropout(p=0.3)
+        self.attn = nn.MultiheadAttention(self.h_d, self.h_d//4, batch_first=True)
+        self.norm = nn.LayerNorm(self.h_d)
+
+        self.ffn = nn.Sequential(
+            nn.Linear(self.h_d, self.h_d* 2),
+            nn.ReLU(),
+            nn.Linear(self.h_d * 2, self.h_d),
+        )
+
+        self.norm2 = nn.LayerNorm(self.h_d)
+
+        self.ffn_r = nn.Sequential(
+            nn.Linear(3, 8),
+            self.act_fn,
+            nn.Linear(8, 16),
+            self.act_fn,
+            nn.LayerNorm(16),
+            nn.Linear(16, 8),
+            self.act_fn,
+            nn.Linear(8, 3),
+        )
+
+        self.ffn_pred = nn.Sequential(
+            nn.Linear(3, 8),
+            self.act_fn,
+            nn.Linear(8, 16),
+            self.act_fn,
+            nn.LayerNorm(16),
+            nn.Linear(16, 8),
+            self.act_fn,
+            nn.Linear(8, 3),
+        )
+
+        self.attn_pred = nn.MultiheadAttention(3, 3, batch_first=True)
+        self.norm_pred = nn.LayerNorm(3)
+        self.norm2_pred = nn.LayerNorm(3)
+
+        self.init_tune = nn.Sequential(
+            nn.Linear(3, 16),
+            nn.LayerNorm(16),
+            self.act_fn,
+            nn.Linear(16, 3),
+        )
 
 
     @staticmethod
@@ -159,104 +267,146 @@ class Autoreg_module(nn.Module):
 
         return x_rotated.view(B, L, D)
 
+    @staticmethod
+    def d_vecs(x):
+        x = x[:, 1:] - x[:, :-1]
+        return x
 
 
-    def forward(self, full_seq, seqs, init_deltas, bps):
+    @staticmethod
+    def in_bas(r):
 
-        emb = self.gen.nuk_loc_embedder(full_seq.long()) + self.nuk_embedder(full_seq.long())
-        emb = self.apply_rope(emb).to(self.device)
+        v10 = r[:, 1, :] - r[:, 0, :]
+        v20 = r[:, 2, :] - r[:, 0, :]
+
+        vec_ortho = ortho_basis(v10, v20)
+        ortho_mat = inner_ort_basis(vec_ortho)
+        return  ortho_mat
+
+
+
+    def forward(self, full_seq, seqs, init_deltas, bps, sch_samp=False, targets=None):
+
+        emb =  self.nuk_embedder(full_seq.long())  + self.gen.nuk_loc_embedder(full_seq.long())
+
+       # emb = self.apply_rope(emb).to(self.device)
 
         b_s, seq_len, _ = emb.shape
+        bps = self.conv_block(bps.float().unsqueeze(1)).squeeze(1)
 
-        emb_mat = torch.einsum('ijk, ikl -> ijl', emb, torch.permute(emb, (0, 2, 1)))
-        bps = emb_mat * bps
-        bps = bps.to(torch.float32)
-        bps = self.conv_block(bps.unsqueeze(1)).squeeze(1)
 
-        residual = emb
-        attn_output, attn_weights = self.att_emb(emb, emb, emb, need_weights=True)
-        attn_weights = attn_weights * bps
-        attn_weights = attn_weights / (attn_weights.sum(dim=-1, keepdim=True) + 1e-6)
+        #emb_mat = torch.einsum('ijk, ikl -> ijl', emb, torch.permute(emb, (0, 2, 1)))
+        bps = bps #+ emb_mat
+        bps = bps.to(torch.float32) #+ emb_mat
+
+        attn_output, attn_logits = self.att_emb(emb, emb, emb, need_weights=True)
+        attn_logits = attn_logits + bps
+        attn_weights = torch.softmax(attn_logits, dim=-1)
         attn_output = torch.matmul(attn_weights, emb)
 
-        emb = self.norm1(residual + attn_output)
+        emb = self.norm1(attn_output)
         emb = self.dropout_attn(emb)
 
         residual = emb
         output = self.prj_att_ln(attn_output)
-        output = self.norm2(output + residual)
+        output = output + residual
         output = self.act_fn(output)
+
+        attn_out, _ = self.attn(output, output, output)
+        x = self.norm(output + attn_out)
+        ffn_out = self.ffn(x)
+        output = self.norm2(x + ffn_out)
 
         output = self.act_fn(output)
         output = self.dropout_post(output)  # Dropout перед предсказанием координат
 
+
+        init_cord = init_deltas + self.init_prj(init_deltas)
+
         dr = self.cord_prj_layer(output)
 
-        dr_init = self.act_fn(self.init_prj(dr[:,:3]))
-        U_init = self.act_fn(self.U_init(dr_init).reshape(-1, 3, 3, 3))
-        rad_init = self.act_fn(self.rad_init(dr_init).reshape(-1, 3, 3))
-        trans_init = self.act_fn(self.trans_init(dr_init).reshape(-1, 3, 3))
-
-        I_init = torch.ones_like(U_init)
-        init_cord = torch.einsum('sljk,slk-> slj', (I_init + U_init), rad_init) + trans_init
-        init_cord = init_deltas + self.denoise_layer(init_cord)
-
-        dr_pred = dr[:, 3:]
-        U_pred = self.head_U(dr_pred).reshape(b_s, seq_len-3, 3, 3)
-        I = torch.ones_like(U_pred)
-
-        rad_pred = self.rad_layer(dr_pred)
-        tr_pred = self.tr_layer(dr_pred)
-        mean = torch.tensor([[1, 1.5, 1.3]]).to(self.device).repeat(1, seq_len-3, 1)
-        dr_pred = rad_pred + mean
-        dr_pred = self.u_norm(dr_pred)
-
-        r_pred = torch.einsum('sijk,sik->sij', (I + U_pred), dr_pred)
-        dr_pred = r_pred + tr_pred
+        U_pred = self.head_U(dr).reshape(b_s, seq_len, 3, 3)[:, :-3]
+        rad_pred = self.rad_layer(dr)[:, :-1]
+        tr_pred = self.tr_layer(dr)[:, :-1]
 
 
         r_curr = init_cord.to(self.device)
-        cord = torch.empty((b_s, 0, 3)).to(self.device)
-        shifts_pred = torch.empty((b_s, 0, 3)).to(self.device)
-        full_cords_pred = torch.empty((b_s, 0, 3)).to(self.device)
 
+
+        cord = torch.empty((b_s, 0, 3)).to(self.device)
+        loc = torch.empty((b_s, 0, 3)).to(self.device)
+
+
+        init_sh = self.d_vecs(init_cord)
+        zeros = torch.zeros((b_s, 1, 3)).to(self.device)
+        loc = torch.cat([loc, zeros, init_sh], dim=1)
         cord = torch.cat([cord, init_cord], dim=1)
+
+
+        trans_mat = torch.empty((b_s, 0, 3, 3)).to(self.device)
+
+
+        I = (torch.eye(3).repeat(b_s, 1, 1)).to(self.device)
+        I = I.unsqueeze(1)
+        I = I.repeat(1, 3, 1, 1)
+        trans_mat = torch.cat([trans_mat, I], dim=1)
+
+
+
         for num in range(max_len-3):
+
+            if sch_samp:
+                r_curr_tr = targets[:, num:num + 3]
+                if torch.rand(1).item() <= self.p :
+                    r_curr = r_curr_tr
+
+
             v10 = r_curr[:, 1, :] - r_curr[:, 0, :]
             v20 = r_curr[:, 2, :] - r_curr[:, 0, :]
 
-            r_pred = self.gen(seqs[:, num], r=r_curr)
-
-            delta = dr_pred[:, num]
             vec_ortho = ortho_basis(v10, v20)
             ortho_mat = inner_ort_basis(vec_ortho)
+            trans_mat = torch.cat([trans_mat, ortho_mat.unsqueeze(1)], dim=1)
 
-            shifts_pred = torch.cat([shifts_pred, r_pred.unsqueeze(1)], dim=1)
+            r_pred, local_vec = self.gen(seqs[:, num], r=r_curr)
 
-            r_pred = torch.einsum('lkj, lj -> lk', ortho_mat.transpose(-1, -2) ,delta) + r_curr[:, -1] + r_pred
-            full_cords_pred = torch.cat([full_cords_pred, r_pred.unsqueeze(1)], dim=1)
+            I = torch.eye(3).repeat(b_s, 1, 1).to(self.device)
 
-            r_curr = torch.cat([r_curr[:, 1:], r_pred.unsqueeze(1)], dim=1)
+            A = U_pred[:, num]
+
+            r_pred = torch.einsum('lkj, lj -> lk', I+A, local_vec + rad_pred[:, num]) + tr_pred[:, num]
+            r_pred = r_pred  + self.ffn_pred(r_pred)
+
+            loc = torch.cat([loc, r_pred.unsqueeze(1)], dim=1)
+            r_pred = torch.einsum('lkj, lj -> lk', ortho_mat.transpose(-1, -2), r_pred)
+
+            #r_pred = torch.einsum('lkj, lj -> lk', ortho_mat.transpose(-1,-2), r_pred)
+            r_pred = r_curr[:, -1] + r_pred
             cord = torch.cat([cord, r_pred.unsqueeze(1)], dim=1)
 
+            r_curr = torch.cat([r_curr[:, 1:], r_pred.unsqueeze(1)], dim=1)
 
-        diff = cord.unsqueeze(2) - cord.unsqueeze(1)
 
-        diff_q = self.Q(diff)
-        diff_k = self.K(diff).permute(0, 3, 2, 1)
-        dr_v = self.V(dr)
-        mat = torch.einsum('sijk, skjl->sil', diff_q, diff_k)
-        mat = self.dropout_final(mat)
-        d_k = diff_q.shape[-1]
-        mat = mat / (d_k ** 0.5)
+        bps =  self.conv_block2(bps.unsqueeze(1)).squeeze(1)
+        loc = self.ffn_r(loc)
 
-        attn_weights = torch.softmax(mat, dim=-1)
-        df = torch.einsum('sij,sjl->sil', attn_weights, dr_v)
+        #attn_out, attn_weights = self.attn_pred(loc, loc, loc)  # (B, T, 3)
 
-        df = self.act_fn(df)
-        df = self.r_norm(df)
+        attn_output, attn_weights = self.attn_pred(loc, loc, loc, need_weights=True)
+        attn_weights = bps+attn_weights
+        attn_weights = F.softmax(attn_weights, dim=-1)
+        attn_out = loc + attn_output
 
-        cord = df + cord
+
+        loc = self.norm_pred(loc + attn_out)  # Residual + norm
+
+        # Feed-forward
+        ffn_out = self.ffn_pred(loc)  # (B, T, 3)
+        loc = loc + self.norm2_pred(ffn_out)
+
+
+        dcord = torch.einsum('ijkl, ijk -> ijl', trans_mat, loc)
+        cord = cord #+ dcord
 
         return cord
 

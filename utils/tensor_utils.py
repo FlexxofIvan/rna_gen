@@ -14,7 +14,8 @@ def compute_angles(x: torch.tensor,  epsilon=1e-6):
 
     sin_angl = (I - cos_angl**2)**0.5
 
-    norms = norms.reshape(-1, 1, 3)
+    norms = (norms.reshape(-1, 1, 3))
+    norms = norms/torch.norm(norms, dim=-1).unsqueeze(-1)
 
     cos_norm = norms*cos_angl
     sin_norm = norms*sin_angl

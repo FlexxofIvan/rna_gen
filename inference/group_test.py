@@ -4,6 +4,7 @@ from model import Global_module
 from autoreg_model import Autoreg_module
 from utils.tensor_utils import loc_basis
 
+from constants import max_len, nuks_val
 
 
  ### подгружаем данные
@@ -18,7 +19,8 @@ means_init = torch.tensor([[ 0.0000e+00,  0.0000e+00,  0.0000e+00],
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = Autoreg_module(gen=Global_module).to(device)
+device = torch.device("cpu")
+model = Autoreg_module(gen=Global_module, h_d=64, device=device).to(device)
 
 
 full_data = []
@@ -45,7 +47,7 @@ for num in range(len(data)):
     r_tar = torch.einsum('ij, lj -> li', R1.transpose(-2, -1), r_tar)
     full_data.append((full_seq, seqs, means_init, bp, r_tar))
 
-full_seq, seqs, r_fea, bp, r_tar = full_data[47]
+full_seq, seqs, r_fea, bp, r_tar = full_data[57]
 
 full_seq = full_seq.to(device)
 seqs = seqs.to(device)
@@ -54,11 +56,51 @@ r_tar = r_tar.to(device)
 bp= bp.to(device)
 
 r_tar = r_tar - r_tar[0]
+r_tar = r_tar
 
-model.load_state_dict(torch.load(f'../checkpoints/autoreg_epoch.pt'))
+model.load_state_dict(torch.load('../checkpoints/autoreg_epoch.pt', map_location='cpu'))
+#model.load_state_dict(torch.load(f'../checkpoints/autoreg_epoch.pt'))
 model.eval()
-_, r = model(full_seq, seqs, r_init, bp)
+
+
+def tens_pad(fea, padd_val):
+    padd_size = max_len - fea.shape[0]
+    tens_size = fea.shape[1:]
+    padd_val = padd_val.to(device)
+    padd = torch.full((padd_size,) + tens_size, padd_val).to(device)
+    fea = torch.cat([fea, padd], dim=0)
+    return fea
+
+
+def bpp_pad(fea):
+    padd_size = max_len - fea.shape[0]
+
+    padd_vert = torch.zeros((padd_size, fea.shape[1])).to(device)
+    fea = torch.cat((fea, padd_vert), dim=0)
+
+    padd_hor = torch.zeros((fea.shape[0], padd_size)).to(device)
+    fea = torch.cat((fea, padd_hor), dim=1)
+
+    return fea
+
+pad = torch.tensor(0.0)
+padd_symb = torch.tensor(nuks_val['p'])
+
+L = full_seq.shape[0] - 6
+full_seq = tens_pad(full_seq,  padd_symb).unsqueeze(0)
+seqs = tens_pad(seqs,  padd_symb).unsqueeze(0)
+bp = bpp_pad(bp).unsqueeze(0)
+r_init = r_init.unsqueeze(0)
+
+r = model(full_seq, seqs, r_init, bp)
+
+r = (r.squeeze(0))[:L]
+
+
+#r = torch.cumsum(r, dim=0)
+
 r = r.detach().cpu()
+
 
 
 def vis_two(r1, r2):

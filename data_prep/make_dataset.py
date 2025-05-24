@@ -2,6 +2,7 @@ from utils.data_utils import group_by_rna, select_seq_and_cord, unfold_seq_r
 from utils.eterna_utils import seq_to_bpp
 import torch
 
+import numpy as np
 
 ###padding sucks
 
@@ -9,16 +10,39 @@ data_dir = '../data/train_labels.csv'
 train_groups = group_by_rna(data_dir)
 data = select_seq_and_cord(train_groups, True, padding=True) ### take seqs and coordinates
 
+def d_vecs(x):
+    x = x[1:] - x[:-1]
+    return x
+
+filtered_data = []
+
+for i, (seq, coords) in enumerate(data):
+    # Обрезаем, как в твоём коде
+    sub_coords = coords[4:-4]
+
+    # Проверка на выброс
+    max_norm = torch.norm(d_vecs(sub_coords), dim=-1).max()
+
+    if max_norm <= 14:
+        filtered_data.append((seq, coords))  # сохраняем нормальные
+
+print(f"Отфильтровано: {len(data) - len(filtered_data)} выбросов из {len(data)}")
+
+data = filtered_data
+
+
+
 
 window_lst = []
 for num in range(0, len(data)):
+
     seq, _ = data[num]
     seq_len = seq.shape[0]  ###нужно чтоб билось на окна
     if seq_len < 4:
         continue
     seq_unf, r_unf = unfold_seq_r(data[num], padding=True)
-    new_data = [( seq_unf[num], r_unf[num])
-            for num in range(len(seq_unf))]
+    new_data = [( seq_unf[number], r_unf[number])
+            for number in range(len(seq_unf))]
     window_lst.append(new_data)
 
 
@@ -47,6 +71,11 @@ for num, window in enumerate(window_lst):
             tar_r = torch.cat((tar_r, r), dim=0)
             init_r = r[:-1]
         else:
+            m = torch.norm(tar_r[-1] - r[-1], dim=-1)
+            """
+            if m>10:
+                print(m, 'pizdec')
+            """
             tar_r = torch.cat((tar_r, r[-1].unsqueeze(0)))
 
         seqs= torch.cat((seqs, seq.unsqueeze(0)), dim=0)

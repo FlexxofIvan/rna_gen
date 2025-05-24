@@ -27,4 +27,4 @@ means_init = torch.tensor([[ 0.0000e+00,  0.0000e+00,  0.0000e+00],
 
 
 
-max_len = 128
+max_len = 160
